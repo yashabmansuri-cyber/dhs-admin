@@ -1,0 +1,76 @@
+name: Build DHS Admin APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'DHS-Android-Part-*.zip'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract all project parts
+        shell: bash
+        run: |
+          set -e
+          rm -rf assembled
+          mkdir assembled
+          shopt -s nullglob
+          parts=(DHS-Android-Part-*.zip)
+          if [ ${#parts[@]} -eq 0 ]; then
+            echo "ERROR: No DHS-Android-Part-*.zip files found."
+            exit 1
+          fi
+          echo "Found ${#parts[@]} project parts:"
+          printf ' - %s\n' "${parts[@]}"
+          for f in "${parts[@]}"; do
+            echo "Extracting $f..."
+            unzip -o "$f" -d assembled
+          done
+          cp -R assembled/. .
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Fix Android Gradle Plugin version
+        shell: bash
+        run: |
+          set -e
+          # AGP 8.10.2 is not a published stable AGP release.
+          # Use 8.10.1, which is a published stable release.
+          find . -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' \) -print0 | while IFS= read -r -d '' f; do
+            sed -i \
+              -e "s/com\.android\.application[[:space:]]*version[[:space:]]*['\"]8\.10\.2['\"]/com.android.application version '8.10.1'/g" \
+              -e "s/com\.android\.library[[:space:]]*version[[:space:]]*['\"]8\.10\.2['\"]/com.android.library version '8.10.1'/g" \
+              -e "s/com\.android\.tools\.build:gradle:8\.10\.2/com.android.tools.build:gradle:8.10.1/g" \
+              "$f"
+          done
+
+          if [ -f gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's/gradle-8\.10\.2-/gradle-8.11.1-/g' gradle/wrapper/gradle-wrapper.properties
+          fi
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -e
+          # Use the Gradle version installed by setup-gradle (8.11.1).
+          gradle --version
+          gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DHS-Admin-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
